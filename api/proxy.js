@@ -4,7 +4,7 @@ export const config = {
   api: {
     bodyParser: false,
   },
-  maxDuration: 60,
+  maxDuration: 300,
 }
 
 const DEFAULT_PROXY_TARGET = 'https://api.asxs.top/v1'
