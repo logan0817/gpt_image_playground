@@ -9,7 +9,9 @@ export function isAllowedProxyPath(path) {
 }
 
 export function getConfiguredProxyTarget(env = process.env) {
-  return typeof env?.API_PROXY_URL === 'string' ? env.API_PROXY_URL.trim() : ''
+  const proxyUrl = typeof env?.API_PROXY_URL === 'string' ? env.API_PROXY_URL.trim() : ''
+  if (proxyUrl) return proxyUrl
+  return typeof env?.DEFAULT_PROFILE_BASE_URL === 'string' ? env.DEFAULT_PROFILE_BASE_URL.trim() : ''
 }
 
 export function buildTargetUrl(baseUrl, path, searchParams) {

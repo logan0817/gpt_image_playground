@@ -27,7 +27,14 @@ describe('vercel api proxy utilities', () => {
     })).toBe('')
     expect(getConfiguredProxyTarget({
       API_PROXY_URL: ' https://proxy.example.com/v1 ',
+      DEFAULT_PROFILE_BASE_URL: 'https://default-profile.example.com/v1',
       VITE_DEFAULT_API_URL: 'https://frontend-default.example.com/v1',
     })).toBe('https://proxy.example.com/v1')
+  })
+
+  it('uses the explicit default profile base URL when a dedicated proxy target is not set', () => {
+    expect(getConfiguredProxyTarget({
+      DEFAULT_PROFILE_BASE_URL: ' https://default-profile.example.com/v1 ',
+    })).toBe('https://default-profile.example.com/v1')
   })
 })
