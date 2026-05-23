@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
-import { fetchDefaultProfile, mergeDefaultProfileSettings } from '../lib/defaultProfileImport'
+import { applyDefaultProfileToActiveSettings, fetchDefaultProfile } from '../lib/defaultProfileImport'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
@@ -619,14 +619,14 @@ export default function SettingsModal() {
     setDefaultProfileImportError(null)
     try {
       const profile = await fetchDefaultProfile(password)
-      const nextDraft = mergeDefaultProfileSettings(draft, profile)
+      const nextDraft = applyDefaultProfileToActiveSettings(draft, profile, { apiProxy: true })
       setReusedTaskApiProfile(null)
       setDraft(nextDraft)
       setSettings(nextDraft)
       setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
       setShowDefaultProfileImport(false)
       setDefaultProfilePassword('')
-      showToast('默认账号已导入并切换', 'success')
+      showToast('API 代理已开启，默认配置已补充', 'success')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setDefaultProfileImportError(message)
@@ -1451,19 +1451,6 @@ export default function SettingsModal() {
                               <PlusIcon className="h-4 w-4" />
                             </span>
                           </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.preventDefault()
-                              openDefaultProfileImport()
-                            }}
-                            className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]"
-                          >
-                            <span className="truncate font-semibold">导入默认账号</span>
-                            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-400 dark:text-gray-500">
-                              <ImportIcon className="h-4 w-4" />
-                            </span>
-                          </button>
                           <div>
                             {draft.profiles.map(profile => (
                               <div
@@ -1609,7 +1596,12 @@ export default function SettingsModal() {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!apiProxyLocked) updateActiveProfile({ apiProxy: !activeProfile.apiProxy }, true)
+                        if (apiProxyLocked) return
+                        if (apiProxyChecked) {
+                          updateActiveProfile({ apiProxy: false }, true)
+                          return
+                        }
+                        openDefaultProfileImport()
                       }}
                       disabled={apiProxyLocked}
                       className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors ${apiProxyChecked ? 'bg-blue-500' : 'bg-gray-300 dark:bg-gray-600'} ${apiProxyLocked ? 'cursor-not-allowed opacity-70' : ''}`}
@@ -1621,7 +1613,7 @@ export default function SettingsModal() {
                     </button>
                   </div>
                   <div data-selectable-text className="text-xs text-gray-500 dark:text-gray-500">
-                    {apiProxyLocked ? '当前部署已锁定 API 代理为开启，API URL 设置会被忽略。' : '当前部署提供同源代理时默认开启，可手动关闭。开启后用于解决浏览器跨域限制，API URL 设置会被忽略。'}
+                    {apiProxyLocked ? '当前部署已锁定 API 代理为开启，API URL 设置会被忽略。' : '开启时需要输入验证口令，验证通过后会补充服务端预设的 API Key、API URL 和模型等配置；关闭后恢复直接使用当前 API URL。'}
                   </div>
                 </div>
               )}
@@ -2168,10 +2160,10 @@ export default function SettingsModal() {
 
               <h3 className="mb-3 pr-8 flex items-start gap-2.5 text-base font-bold text-gray-800 dark:text-gray-100 leading-snug">
                 <ImportIcon className="h-5 w-5 shrink-0 text-blue-500 mt-0.5" />
-                <span>导入默认账号</span>
+                <span>开启 API 代理</span>
               </h3>
               <div className="mb-5 text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
-                输入验证口令后，服务端会返回预设的 API Key、API URL 和模型配置，并保存到当前浏览器。
+                输入验证口令后，服务端会返回显式配置的默认账号字段，并补充到当前 API 配置。未配置的字段不会覆盖你现有填写。
               </div>
 
               <label className="block">

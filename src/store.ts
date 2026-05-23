@@ -17,7 +17,7 @@ import type {
   ResponsesOutputItem,
 } from './types'
 import { DEFAULT_AGENT_MAX_TOOL_ROUNDS, DEFAULT_PARAMS } from './types'
-import { DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
+import { DEFAULT_RESPONSES_MODEL, DEFAULT_SETTINGS, getActiveApiProfile, getCustomProviderDefinition, mergeImportedSettings, normalizeSettings, validateApiProfile } from './lib/apiProfiles'
 import { dismissAllTooltips } from './lib/tooltipDismiss'
 import { remapImageMentionsForOrder, replaceImageMentionsForApi } from './lib/promptImageMentions'
 import {
@@ -1083,12 +1083,27 @@ export const useStore = create<AppState>()(
 
         if (activeProfile.provider === 'openai' && activeProfile.apiMode !== 'responses') {
           state.setConfirmDialog({
-            title: '需要 Responses API 配置',
-            message: `当前配置「${activeProfile.name}」使用的是 Images API，仅支持生成图片，无 Agent 模式需要的对话能力。\n\n请前往 API 配置页，将当前配置调整为 Responses API，或切换/新建一个支持 Responses API 的配置。`,
-            confirmText: '去设置',
+            title: 'Agent 需要 Responses API',
+            message: `当前配置「${activeProfile.name}」使用的是 Images API。Agent 默认需要 Responses API 才有对话能力。\n\n可以自动把当前配置切换到 Responses API 并进入 Agent。之后回到画廊如果要使用 Images API，请在 API 配置里自行切换回来。`,
+            confirmText: '切换并进入 Agent',
             cancelText: '取消',
             action: () => {
-              useStore.getState().setShowSettings(true, 'api')
+              const latestState = useStore.getState()
+              const latestSettings = normalizeSettings(latestState.settings)
+              const latestActiveProfile = getActiveApiProfile(latestSettings)
+              latestState.setSettings({
+                ...latestSettings,
+                profiles: latestSettings.profiles.map((profile) => profile.id === latestActiveProfile.id
+                  ? {
+                      ...profile,
+                      apiMode: 'responses',
+                      model: profile.model === 'gpt-image-2' ? DEFAULT_RESPONSES_MODEL : profile.model,
+                    }
+                  : profile,
+                ),
+                activeProfileId: latestActiveProfile.id,
+              })
+              useStore.getState().setAppMode('agent')
             },
           })
           return

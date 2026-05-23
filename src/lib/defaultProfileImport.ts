@@ -10,7 +10,7 @@ export const DEFAULT_IMPORTED_PROFILE_ID = 'default-imported-openai'
 
 export interface DefaultProfilePayload {
   name?: string
-  baseUrl: string
+  baseUrl?: string
   apiKey: string
   model?: string
   apiMode?: ApiMode
@@ -27,37 +27,61 @@ interface DefaultProfileResponse {
 }
 
 function normalizeDefaultProfilePayload(input: Partial<DefaultProfilePayload> | undefined): DefaultProfilePayload {
-  const baseUrl = typeof input?.baseUrl === 'string' ? input.baseUrl.trim() : ''
   const apiKey = typeof input?.apiKey === 'string' ? input.apiKey.trim() : ''
-  if (!baseUrl || !apiKey) throw new Error('默认账号配置无效')
+  if (!apiKey) throw new Error('默认账号配置无效')
 
-  return {
-    name: typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : '默认账号',
-    baseUrl,
+  const payload: DefaultProfilePayload = {
     apiKey,
-    model: typeof input?.model === 'string' && input.model.trim() ? input.model.trim() : DEFAULT_IMAGES_MODEL,
-    apiMode: input?.apiMode === 'responses' ? 'responses' : 'images',
-    apiProxy: typeof input?.apiProxy === 'boolean' ? input.apiProxy : true,
-    streamImages: typeof input?.streamImages === 'boolean' ? input.streamImages : true,
-    streamPartialImages: normalizeStreamPartialImages(input?.streamPartialImages),
   }
+  const baseUrl = typeof input?.baseUrl === 'string' ? input.baseUrl.trim() : ''
+  const model = typeof input?.model === 'string' ? input.model.trim() : ''
+  const name = typeof input?.name === 'string' ? input.name.trim() : ''
+  if (name) payload.name = name
+  if (baseUrl) payload.baseUrl = baseUrl
+  if (model) payload.model = model
+  if (input?.apiMode === 'responses' || input?.apiMode === 'images') payload.apiMode = input.apiMode
+  if (typeof input?.apiProxy === 'boolean') payload.apiProxy = input.apiProxy
+  if (typeof input?.streamImages === 'boolean') payload.streamImages = input.streamImages
+  if (input?.streamPartialImages !== undefined) payload.streamPartialImages = normalizeStreamPartialImages(input.streamPartialImages)
+  return payload
 }
 
 export function createDefaultImportedOpenAIProfile(
   input: DefaultProfilePayload,
   id = DEFAULT_IMPORTED_PROFILE_ID,
+  baseProfile?: ApiProfile,
 ): ApiProfile {
   const payload = normalizeDefaultProfilePayload(input)
   return createDefaultOpenAIProfile({
+    ...baseProfile,
     id,
-    name: payload.name,
-    baseUrl: payload.baseUrl,
     apiKey: payload.apiKey,
-    model: payload.model,
-    apiMode: payload.apiMode,
-    apiProxy: payload.apiProxy,
-    streamImages: payload.streamImages,
-    streamPartialImages: payload.streamPartialImages,
+    ...(payload.name ? { name: payload.name } : {}),
+    ...(payload.baseUrl ? { baseUrl: payload.baseUrl } : {}),
+    ...(payload.model ? { model: payload.model } : {}),
+    ...(payload.apiMode ? { apiMode: payload.apiMode } : {}),
+    ...(payload.apiProxy !== undefined ? { apiProxy: payload.apiProxy } : {}),
+    ...(payload.streamImages !== undefined ? { streamImages: payload.streamImages } : {}),
+    ...(payload.streamPartialImages !== undefined ? { streamPartialImages: payload.streamPartialImages } : {}),
+  })
+}
+
+export function applyDefaultProfileToActiveSettings(
+  currentSettings: Partial<AppSettings> | unknown,
+  input: DefaultProfilePayload,
+  patch: Partial<ApiProfile> = {},
+): AppSettings {
+  const current = normalizeSettings(currentSettings)
+  const activeProfile = current.profiles.find((profile) => profile.id === current.activeProfileId) ?? current.profiles[0]
+  const nextActiveProfile = createDefaultImportedOpenAIProfile(input, activeProfile.id, {
+    ...activeProfile,
+    ...patch,
+  })
+
+  return normalizeSettings({
+    ...current,
+    profiles: current.profiles.map((profile) => profile.id === activeProfile.id ? nextActiveProfile : profile),
+    activeProfileId: nextActiveProfile.id,
   })
 }
 
@@ -71,7 +95,7 @@ export function mergeDefaultProfileSettings(
     profile.id === DEFAULT_IMPORTED_PROFILE_ID ||
     (profile.provider === 'openai' && profile.name === normalizedPayload.name),
   )
-  const profile = createDefaultImportedOpenAIProfile(normalizedPayload, existingProfile?.id ?? DEFAULT_IMPORTED_PROFILE_ID)
+  const profile = createDefaultImportedOpenAIProfile(normalizedPayload, existingProfile?.id ?? DEFAULT_IMPORTED_PROFILE_ID, existingProfile)
   const profiles = existingProfile
     ? current.profiles.map((item) => item.id === existingProfile.id ? profile : item)
     : [...current.profiles, profile]

@@ -1,20 +1,16 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_MODEL = 'gpt-image-2'
-const DEFAULT_PROFILE_NAME = '默认账号'
-
 function getEnvString(env, key) {
   const value = env?.[key]
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function getEnvBoolean(env, key, fallback) {
+function getEnvBoolean(env, key) {
   const value = getEnvString(env, key).toLowerCase()
-  if (!value) return fallback
+  if (!value) return undefined
   if (['1', 'true', 'yes', 'on'].includes(value)) return true
   if (['0', 'false', 'no', 'off'].includes(value)) return false
-  return fallback
+  return undefined
 }
 
 function getEnvNumber(env, key) {
@@ -40,16 +36,22 @@ function createDefaultProfileFromEnv(env) {
   if (!apiKey || !password) return null
 
   const profile = {
-    name: getEnvString(env, 'DEFAULT_PROFILE_NAME') || DEFAULT_PROFILE_NAME,
     provider: 'openai',
-    baseUrl: getEnvString(env, 'DEFAULT_PROFILE_BASE_URL') || getEnvString(env, 'API_PROXY_URL') || getEnvString(env, 'VITE_DEFAULT_API_URL') || DEFAULT_BASE_URL,
     apiKey,
-    model: getEnvString(env, 'DEFAULT_PROFILE_MODEL') || DEFAULT_MODEL,
-    apiMode: getEnvString(env, 'DEFAULT_PROFILE_API_MODE') === 'responses' ? 'responses' : 'images',
-    apiProxy: getEnvBoolean(env, 'DEFAULT_PROFILE_API_PROXY', true),
-    streamImages: getEnvBoolean(env, 'DEFAULT_PROFILE_STREAM_IMAGES', true),
   }
+  const name = getEnvString(env, 'DEFAULT_PROFILE_NAME')
+  const baseUrl = getEnvString(env, 'DEFAULT_PROFILE_BASE_URL')
+  const model = getEnvString(env, 'DEFAULT_PROFILE_MODEL')
+  const apiMode = getEnvString(env, 'DEFAULT_PROFILE_API_MODE')
+  const apiProxy = getEnvBoolean(env, 'DEFAULT_PROFILE_API_PROXY')
+  const streamImages = getEnvBoolean(env, 'DEFAULT_PROFILE_STREAM_IMAGES')
   const streamPartialImages = getEnvNumber(env, 'DEFAULT_PROFILE_STREAM_PARTIAL_IMAGES')
+  if (name) profile.name = name
+  if (baseUrl) profile.baseUrl = baseUrl
+  if (model) profile.model = model
+  if (apiMode === 'responses' || apiMode === 'images') profile.apiMode = apiMode
+  if (apiProxy !== undefined) profile.apiProxy = apiProxy
+  if (streamImages !== undefined) profile.streamImages = streamImages
   if (streamPartialImages !== undefined) profile.streamPartialImages = streamPartialImages
   return profile
 }

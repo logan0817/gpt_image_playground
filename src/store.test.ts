@@ -227,6 +227,49 @@ describe('mask draft lifecycle in store actions', () => {
   })
 })
 
+describe('app mode API mode guard', () => {
+  it('offers to switch an OpenAI Images profile to Responses when entering Agent mode', () => {
+    const profile = createDefaultOpenAIProfile({
+      id: 'images-profile',
+      name: '图片配置',
+      apiKey: 'test-key',
+      apiMode: 'images',
+      model: 'gpt-image-2',
+    })
+    const setConfirmDialog = vi.fn()
+    useStore.setState({
+      settings: normalizeSettings({
+        ...DEFAULT_SETTINGS,
+        profiles: [profile],
+        activeProfileId: profile.id,
+      }),
+      appMode: 'gallery',
+      setConfirmDialog,
+    })
+
+    useStore.getState().setAppMode('agent')
+
+    expect(useStore.getState().appMode).toBe('gallery')
+    expect(setConfirmDialog).toHaveBeenCalledWith(expect.objectContaining({
+      title: 'Agent 需要 Responses API',
+      confirmText: '切换并进入 Agent',
+    }))
+
+    const dialog = setConfirmDialog.mock.calls[0][0]
+    dialog.action()
+
+    const state = useStore.getState()
+    const switchedProfile = state.settings.profiles[0]
+    expect(state.appMode).toBe('agent')
+    expect(switchedProfile).toMatchObject({
+      id: profile.id,
+      apiKey: 'test-key',
+      apiMode: 'responses',
+      model: DEFAULT_RESPONSES_MODEL,
+    })
+  })
+})
+
 describe('interrupted OpenAI running tasks', () => {
   it('marks legacy and OpenAI running tasks as interrupted', () => {
     const now = 10_000
