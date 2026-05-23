@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeBaseUrl } from '../lib/api'
+import { fetchDefaultProfile, mergeDefaultProfileSettings } from '../lib/defaultProfileImport'
 import { isApiProxyAvailable, isApiProxyLocked, readClientDevProxyConfig } from '../lib/devProxy'
 import { useStore, exportData, importData, clearData, type SettingsTab } from '../store'
 import {
@@ -328,6 +329,10 @@ export default function SettingsModal() {
   const profileTouchDragRef = useRef<{ id: string, startX: number, startY: number, moved: boolean } | null>(null)
   const [copyImportUrlProfile, setCopyImportUrlProfile] = useState<ApiProfile | null>(null)
   const [copyImportUrlOptions, setCopyImportUrlOptions] = useState<CopyImportUrlOptions>(readCopyImportUrlOptions)
+  const [showDefaultProfileImport, setShowDefaultProfileImport] = useState(false)
+  const [defaultProfilePassword, setDefaultProfilePassword] = useState('')
+  const [defaultProfileImportError, setDefaultProfileImportError] = useState<string | null>(null)
+  const [isImportingDefaultProfile, setIsImportingDefaultProfile] = useState(false)
 
   const apiProxyConfig = readClientDevProxyConfig()
   const apiProxyAvailable = isApiProxyAvailable(apiProxyConfig)
@@ -587,6 +592,48 @@ export default function SettingsModal() {
     setProfileImportUrlTooltipVisible(false)
     setCopyImportUrlProfile(profile)
     setCopyImportUrlOptions(readCopyImportUrlOptions())
+  }
+
+  const openDefaultProfileImport = () => {
+    setShowProfileMenu(false)
+    setDefaultProfilePassword('')
+    setDefaultProfileImportError(null)
+    setShowDefaultProfileImport(true)
+  }
+
+  const closeDefaultProfileImport = () => {
+    if (isImportingDefaultProfile) return
+    setShowDefaultProfileImport(false)
+    setDefaultProfilePassword('')
+    setDefaultProfileImportError(null)
+  }
+
+  const submitDefaultProfileImport = async () => {
+    const password = defaultProfilePassword.trim()
+    if (!password) {
+      setDefaultProfileImportError('请输入验证口令')
+      return
+    }
+
+    setIsImportingDefaultProfile(true)
+    setDefaultProfileImportError(null)
+    try {
+      const profile = await fetchDefaultProfile(password)
+      const nextDraft = mergeDefaultProfileSettings(draft, profile)
+      setReusedTaskApiProfile(null)
+      setDraft(nextDraft)
+      setSettings(nextDraft)
+      setTimeoutInput(String(getActiveApiProfile(nextDraft).timeout))
+      setShowDefaultProfileImport(false)
+      setDefaultProfilePassword('')
+      showToast('默认账号已导入并切换', 'success')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setDefaultProfileImportError(message)
+      showToast(message, 'error')
+    } finally {
+      setIsImportingDefaultProfile(false)
+    }
   }
 
   const getDraftWithActiveProfilePatch = (patch: Partial<ApiProfile>) => ({
@@ -1404,6 +1451,19 @@ export default function SettingsModal() {
                               <PlusIcon className="h-4 w-4" />
                             </span>
                           </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              openDefaultProfileImport()
+                            }}
+                            className="flex w-full cursor-pointer items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-white/[0.06]"
+                          >
+                            <span className="truncate font-semibold">导入默认账号</span>
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-400 dark:text-gray-500">
+                              <ImportIcon className="h-4 w-4" />
+                            </span>
+                          </button>
                           <div>
                             {draft.profiles.map(profile => (
                               <div
@@ -2085,6 +2145,81 @@ export default function SettingsModal() {
             </div>
           </div>
           , document.body)}
+        {showDefaultProfileImport && createPortal(
+          <div
+            data-no-drag-select
+            className="fixed inset-0 z-[110] flex items-center justify-center p-4"
+            onClick={closeDefaultProfileImport}
+          >
+            <div className="absolute inset-0 bg-black/20 dark:bg-black/40 backdrop-blur-md animate-overlay-in" />
+            <div
+              className="relative z-10 w-full max-w-sm rounded-3xl border border-white/50 bg-white/90 p-6 shadow-[0_8px_40px_rgb(0,0,0,0.12)] ring-1 ring-black/5 backdrop-blur-xl animate-confirm-in dark:border-white/[0.08] dark:bg-gray-900/90 dark:shadow-[0_8px_40px_rgb(0,0,0,0.4)] dark:ring-white/10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={closeDefaultProfileImport}
+                disabled={isImportingDefaultProfile}
+                className="absolute right-4 top-4 shrink-0 rounded-full p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.06] dark:hover:text-gray-200"
+                aria-label="关闭"
+              >
+                <CloseIcon className="h-5 w-5" />
+              </button>
+
+              <h3 className="mb-3 pr-8 flex items-start gap-2.5 text-base font-bold text-gray-800 dark:text-gray-100 leading-snug">
+                <ImportIcon className="h-5 w-5 shrink-0 text-blue-500 mt-0.5" />
+                <span>导入默认账号</span>
+              </h3>
+              <div className="mb-5 text-[13px] leading-relaxed text-gray-500 dark:text-gray-400">
+                输入验证口令后，服务端会返回预设的 API Key、API URL 和模型配置，并保存到当前浏览器。
+              </div>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm text-gray-600 dark:text-gray-300">验证口令</span>
+                <input
+                  value={defaultProfilePassword}
+                  onChange={(e) => {
+                    setDefaultProfilePassword(e.target.value)
+                    setDefaultProfileImportError(null)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') submitDefaultProfileImport()
+                  }}
+                  autoFocus
+                  disabled={isImportingDefaultProfile}
+                  type="password"
+                  className="w-full rounded-xl border border-gray-200/70 bg-white/60 px-3 py-2.5 text-sm text-gray-700 outline-none transition focus:border-blue-300 disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/[0.08] dark:bg-white/[0.03] dark:text-gray-200 dark:focus:border-blue-500/50"
+                />
+              </label>
+
+              {defaultProfileImportError && (
+                <div data-selectable-text className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-500 dark:bg-red-500/10 dark:text-red-300">
+                  {defaultProfileImportError}
+                </div>
+              )}
+
+              <div className="mt-5 flex gap-2">
+                <button
+                  type="button"
+                  onClick={closeDefaultProfileImport}
+                  disabled={isImportingDefaultProfile}
+                  className="flex-1 rounded-xl border border-gray-200 py-2 text-sm text-gray-600 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/[0.08] dark:text-gray-400 dark:hover:bg-white/[0.06]"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={submitDefaultProfileImport}
+                  disabled={isImportingDefaultProfile}
+                  className="flex-1 rounded-xl bg-blue-500 py-2 text-sm font-medium text-white shadow-sm shadow-blue-500/20 transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {isImportingDefaultProfile ? '导入中...' : '导入'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
         {profileTouchDragPreview && createPortal(
           <div
             className="fixed pointer-events-none z-[110] flex items-center justify-between gap-2 rounded-xl bg-white/95 px-3 py-2 text-xs text-gray-700 shadow-xl ring-1 ring-black/5 backdrop-blur-xl dark:bg-gray-900/95 dark:text-gray-300 dark:ring-white/10"
