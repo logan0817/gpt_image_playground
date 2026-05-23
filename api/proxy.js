@@ -1,4 +1,4 @@
-import { buildTargetUrl, isAllowedProxyPath, normalizeProxyPath } from './proxy-utils.mjs'
+import { buildTargetUrl, getConfiguredProxyTarget, isAllowedProxyPath, normalizeProxyPath } from './proxy-utils.mjs'
 
 export const config = {
   api: {
@@ -7,7 +7,6 @@ export const config = {
   maxDuration: 300,
 }
 
-const DEFAULT_PROXY_TARGET = 'https://api.asxs.top/v1'
 const FORWARDED_REQUEST_HEADERS = new Set([
   'accept',
   'authorization',
@@ -77,9 +76,21 @@ export default async function handler(req, res) {
     return
   }
 
+  const proxyTarget = getConfiguredProxyTarget(process.env)
+  if (!proxyTarget) {
+    res.statusCode = 503
+    res.setHeader('Content-Type', 'application/json; charset=utf-8')
+    res.end(JSON.stringify({
+      error: {
+        message: 'API 代理未配置，请设置 API_PROXY_URL',
+      },
+    }))
+    return
+  }
+
   const requestUrl = new URL(req.url || '/', 'https://proxy.local')
   const targetUrl = buildTargetUrl(
-    process.env.API_PROXY_URL || process.env.VITE_DEFAULT_API_URL || DEFAULT_PROXY_TARGET,
+    proxyTarget,
     proxyPath,
     requestUrl.searchParams,
   )

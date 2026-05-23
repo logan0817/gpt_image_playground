@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DEFAULT_FAL_BASE_URL,
   DEFAULT_FAL_MODEL,
@@ -16,6 +16,49 @@ import {
 } from './apiProfiles'
 
 describe('mergeImportedSettings', () => {
+  it('uses safe OpenAI profile defaults', () => {
+    expect(DEFAULT_SETTINGS.baseUrl).toBe('https://api.openai.com/v1')
+    expect(DEFAULT_SETTINGS.timeout).toBe(120)
+    expect(DEFAULT_SETTINGS.apiProxy).toBe(false)
+    expect(DEFAULT_SETTINGS.profiles[0]).toMatchObject({
+      baseUrl: 'https://api.openai.com/v1',
+      timeout: 120,
+      apiProxy: false,
+    })
+    expect(createDefaultOpenAIProfile({ id: 'fresh-openai' })).toMatchObject({
+      baseUrl: 'https://api.openai.com/v1',
+      timeout: 120,
+      apiProxy: false,
+    })
+  })
+
+  it('keeps new OpenAI profiles proxy disabled when VITE_API_PROXY_DEFAULT_ENABLED is missing', async () => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+
+    try {
+      const { createDefaultOpenAIProfile } = await import('./apiProfiles')
+      expect(createDefaultOpenAIProfile({ id: 'fresh-openai' }).apiProxy).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
+  it('allows VITE_API_PROXY_DEFAULT_ENABLED to explicitly default new OpenAI profiles on', async () => {
+    vi.stubEnv('VITE_API_PROXY_AVAILABLE', 'true')
+    vi.stubEnv('VITE_API_PROXY_DEFAULT_ENABLED', 'true')
+    vi.resetModules()
+
+    try {
+      const { createDefaultOpenAIProfile } = await import('./apiProfiles')
+      expect(createDefaultOpenAIProfile({ id: 'fresh-openai' }).apiProxy).toBe(true)
+    } finally {
+      vi.unstubAllEnvs()
+      vi.resetModules()
+    }
+  })
+
   it('replaces the default OpenAI profile with legacy imported settings when current settings are untouched', () => {
     const merged = mergeImportedSettings(DEFAULT_SETTINGS, {
       baseUrl: 'https://api.example.com/v1',

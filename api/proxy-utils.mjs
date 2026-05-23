@@ -8,6 +8,10 @@ export function isAllowedProxyPath(path) {
   return ALLOWED_PROXY_PATH_RE.test(normalizeProxyPath(path))
 }
 
+export function getConfiguredProxyTarget(env = process.env) {
+  return typeof env?.API_PROXY_URL === 'string' ? env.API_PROXY_URL.trim() : ''
+}
+
 export function buildTargetUrl(baseUrl, path, searchParams) {
   const target = new URL(baseUrl)
   const normalizedPath = normalizeProxyPath(path)
