@@ -194,6 +194,93 @@ describe('callImageApi', () => {
     })
   })
 
+  it('parses Images API edit streams even when the proxy returns a JSON content type', async () => {
+    const nativeFetch = globalThis.fetch
+    const streamBody = [
+      'event: image_edit.completed',
+      'data: {"type":"image_edit.completed","b64_json":"ZWRpdGVk","size":"2160x3840","quality":"high","output_format":"png"}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) => {
+      if (String(input).startsWith('data:')) return nativeFetch(input, init)
+      return Promise.resolve(new Response(streamBody, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+    })
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        streamImages: true,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          streamImages: true,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: ['data:image/png;base64,aW1hZ2U='],
+    } as any)
+
+    expect(fetchMock.mock.calls.some(([url]) => url === 'https://api.openai.com/v1/images/edits')).toBe(true)
+    expect(result).toMatchObject({
+      images: ['data:image/png;base64,ZWRpdGVk'],
+      actualParams: {
+        output_format: 'png',
+        quality: 'high',
+        size: '2160x3840',
+      },
+    })
+  })
+
+  it('keeps an Images API stream result when the transport terminates after the completed event', async () => {
+    const completedEvent = [
+      'data: {"type":"image_generation.completed","b64_json":"ZmluYWw=","size":"1024x1024","quality":"high","output_format":"png"}',
+      '',
+      '',
+    ].join('\n')
+    let delivered = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(completedEvent))
+      },
+      pull(controller) {
+        if (!delivered) {
+          delivered = true
+          return
+        }
+        setTimeout(() => controller.error(new TypeError('terminated')), 0)
+      },
+    })
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(body, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    }))
+
+    const result = await callImageApi({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: 'test-key',
+        streamImages: true,
+        profiles: DEFAULT_SETTINGS.profiles.map((profile) => ({
+          ...profile,
+          apiKey: 'test-key',
+          streamImages: true,
+        })),
+      },
+      prompt: 'prompt',
+      params: { ...DEFAULT_PARAMS },
+      inputImageDataUrls: [],
+    } as any)
+
+    expect(result.images).toEqual(['data:image/png;base64,ZmluYWw='])
+  })
+
   it('splits Images API streaming into concurrent single-image requests when n is greater than 1', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
       const streamBody = [

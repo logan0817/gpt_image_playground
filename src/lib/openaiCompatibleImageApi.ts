@@ -90,6 +90,20 @@ function isEventStreamResponse(response: Response): boolean {
   return response.headers.get('Content-Type')?.toLowerCase().includes('text/event-stream') ?? false
 }
 
+function looksLikeServerSentEventsText(text: string): boolean {
+  return /^\s*(?:event|data):/m.test(text)
+}
+
+function isStreamTransportError(err: unknown): boolean {
+  if (typeof DOMException !== 'undefined' && err instanceof DOMException && err.name === 'AbortError') return true
+  const message = err instanceof Error ? err.message : String(err)
+  return /terminated|network|fetch failed|load failed|aborted|abort|断开|中断|连接|timeout/i.test(message)
+}
+
+function createStreamInterruptedError() {
+  return new Error('流式响应连接中断，后台请求可能已返回 200，但浏览器没有完整收到最终图片。请重试，或在 API 设置里关闭流式输出后再生成大图。')
+}
+
 function isRecordValue(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
@@ -132,30 +146,30 @@ function parseServerSentEventBlock(block: string): string | null {
   return data
 }
 
+async function processJsonServerSentEventBlock(block: string, onEvent: (event: Record<string, unknown>) => void | Promise<void>) {
+  const data = parseServerSentEventBlock(block)
+  if (!data) return
+
+  let event: unknown
+  try {
+    event = JSON.parse(data)
+  } catch {
+    throw new Error('流式响应包含无法解析的 JSON 事件')
+  }
+  if (!isRecordValue(event)) return
+
+  const errorMessage = getStreamEventErrorMessage(event)
+  if (errorMessage) throw new Error(errorMessage)
+
+  await onEvent(event)
+}
+
 async function readJsonServerSentEvents(response: Response, onEvent: (event: Record<string, unknown>) => void | Promise<void>): Promise<void> {
   if (!response.body) throw new Error('接口未返回可读取的流式响应')
 
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
-
-  const processBlock = async (block: string) => {
-    const data = parseServerSentEventBlock(block)
-    if (!data) return
-
-    let event: unknown
-    try {
-      event = JSON.parse(data)
-    } catch {
-      throw new Error('流式响应包含无法解析的 JSON 事件')
-    }
-    if (!isRecordValue(event)) return
-
-    const errorMessage = getStreamEventErrorMessage(event)
-    if (errorMessage) throw new Error(errorMessage)
-
-    await onEvent(event)
-  }
 
   while (true) {
     const { value, done } = await reader.read()
@@ -167,13 +181,20 @@ async function readJsonServerSentEvents(response: Response, onEvent: (event: Rec
       const block = buffer.slice(0, separatorIndex)
       const separator = buffer.match(/\r?\n\r?\n/)?.[0] ?? '\n\n'
       buffer = buffer.slice(separatorIndex + separator.length)
-      await processBlock(block)
+      await processJsonServerSentEventBlock(block, onEvent)
       separatorIndex = buffer.search(/\r?\n\r?\n/)
     }
   }
 
   buffer += decoder.decode()
-  if (buffer.trim()) await processBlock(buffer)
+  if (buffer.trim()) await processJsonServerSentEventBlock(buffer, onEvent)
+}
+
+async function readJsonServerSentEventText(text: string, onEvent: (event: Record<string, unknown>) => void | Promise<void>): Promise<void> {
+  const normalized = text.replace(/\r\n/g, '\n')
+  for (const block of normalized.split(/\n\n+/)) {
+    if (block.trim()) await processJsonServerSentEventBlock(block, onEvent)
+  }
 }
 
 function createResponsesImageTool(
@@ -352,7 +373,55 @@ async function parseImagesApiStreamResponse(
 ): Promise<CallApiResult> {
   const completedItems: ImageResponseItem[] = []
 
-  await readJsonServerSentEvents(response, (event) => {
+  const onEvent = (event: Record<string, unknown>) => {
+    const type = getStringValue(event, 'type')
+    if (type === 'image_generation.partial_image' || type === 'image_edit.partial_image') {
+      const b64 = getStringValue(event, 'b64_json')
+      if (b64) {
+        onPartialImage?.({
+          image: normalizeBase64Image(b64, mime),
+          partialImageIndex: getNumberValue(event, 'partial_image_index'),
+        })
+      }
+      return
+    }
+
+    if (type === 'image_generation.completed' || type === 'image_edit.completed') {
+      completedItems.push(eventToImageResponseItem(event))
+    }
+  }
+
+  try {
+    await readJsonServerSentEvents(response, onEvent)
+  } catch (err) {
+    if (!(completedItems.length && isStreamTransportError(err))) {
+      if (isStreamTransportError(err)) throw createStreamInterruptedError()
+      throw err
+    }
+  }
+
+  return createImagesApiStreamResult(completedItems, mime)
+}
+
+async function parseImagesApiTextResponse(
+  response: Response,
+  mime: string,
+  signal?: AbortSignal,
+  onPartialImage?: CallApiOptions['onPartialImage'],
+): Promise<CallApiResult> {
+  let text: string
+  try {
+    text = await response.text()
+  } catch (err) {
+    if (isStreamTransportError(err)) throw createStreamInterruptedError()
+    throw err
+  }
+  if (!looksLikeServerSentEventsText(text)) {
+    return parseImagesApiResponse(JSON.parse(text) as ImageApiResponse, mime, signal)
+  }
+
+  const completedItems: ImageResponseItem[] = []
+  await readJsonServerSentEventText(text, (event) => {
     const type = getStringValue(event, 'type')
     if (type === 'image_generation.partial_image' || type === 'image_edit.partial_image') {
       const b64 = getStringValue(event, 'b64_json')
@@ -370,6 +439,10 @@ async function parseImagesApiStreamResponse(
     }
   })
 
+  return createImagesApiStreamResult(completedItems, mime)
+}
+
+function createImagesApiStreamResult(completedItems: ImageResponseItem[], mime: string): CallApiResult {
   if (!completedItems.length) {
     throw new Error('流式接口未返回最终图片数据')
   }
@@ -644,6 +717,10 @@ async function callImagesApiSingle(opts: CallApiOptions, profile: ApiProfile, cu
 
     if (profile.streamImages && isEventStreamResponse(response)) {
       return parseImagesApiStreamResponse(response, mime, opts.onPartialImage)
+    }
+
+    if (profile.streamImages) {
+      return parseImagesApiTextResponse(response, mime, controller.signal, opts.onPartialImage)
     }
 
     return parseImagesApiResponse(await response.json() as ImageApiResponse, mime, controller.signal)
